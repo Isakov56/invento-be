@@ -4,9 +4,12 @@ import fs from 'fs';
 import config from '../config/env';
 import { Request } from 'express';
 
-// Ensure uploads directory exists
-const uploadDir = config.uploadPath;
-if (!fs.existsSync(uploadDir)) {
+// Ensure uploads directory exists (only in non-serverless environments)
+// In Vercel/serverless, use /tmp which is writable
+const uploadDir = process.env.VERCEL ? '/tmp/uploads' : config.uploadPath;
+
+// Only try to create directory in non-Vercel environments
+if (!process.env.VERCEL && !fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
