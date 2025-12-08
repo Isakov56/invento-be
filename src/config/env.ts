@@ -9,10 +9,22 @@ interface Config {
   databaseUrl: string;
   jwtSecret: string;
   jwtExpiresIn: string;
-  corsOrigin: string;
+  corsOrigin: string | string[];
   maxFileSize: number;
   uploadPath: string;
 }
+
+// Parse CORS_ORIGIN - supports single URL or comma-separated URLs
+const parseCorsOrigin = (origin: string | undefined): string | string[] => {
+  if (!origin) return 'http://localhost:5173';
+
+  // Check if multiple origins (comma-separated)
+  if (origin.includes(',')) {
+    return origin.split(',').map(url => url.trim());
+  }
+
+  return origin;
+};
 
 const config: Config = {
   port: parseInt(process.env.PORT || '5000', 10),
@@ -20,7 +32,7 @@ const config: Config = {
   databaseUrl: process.env.DATABASE_URL || '',
   jwtSecret: process.env.JWT_SECRET || 'fallback-secret-key',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
-  corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  corsOrigin: parseCorsOrigin(process.env.CORS_ORIGIN),
   maxFileSize: parseInt(process.env.MAX_FILE_SIZE || '5242880', 10),
   uploadPath: process.env.UPLOAD_PATH || './uploads',
 };
