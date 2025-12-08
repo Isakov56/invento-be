@@ -66,13 +66,16 @@ app.use(notFoundHandler);
 // Error handler (must be last)
 app.use(errorHandler);
 
-// Start server
+// Start server (only in non-Vercel environments)
 const PORT = config.port;
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server is running on port ${PORT}`);
-  console.log(`📝 Environment: ${config.nodeEnv}`);
-  console.log(`🔗 API URL: http://localhost:${PORT}`);
-});
+if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server is running on port ${PORT}`);
+    console.log(`📝 Environment: ${config.nodeEnv}`);
+    console.log(`🔗 API URL: http://localhost:${PORT}`);
+  });
+}
 
+// Export for Vercel serverless
 export default app;
