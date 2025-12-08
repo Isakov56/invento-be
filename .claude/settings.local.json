@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir /s /b D:Inventoretail-pos-systembackend)",
+      "Bash(findstr:*)",
+      "Bash(npm run dev:*)",
+      "Bash(netstat:*)",
+      "Bash(taskkill:*)",
+      "Bash(cmd /c taskkill /F /PID 7416)",
+      "Bash(powershell \"Stop-Process -Id 7416 -Force\")",
+      "Bash(npx prisma generate:*)",
+      "Bash(npx prisma migrate dev:*)",
+      "Bash(npx prisma db push:*)",
+      "Bash(timeout /t 3)",
+      "Bash(powershell \"Start-Sleep -Seconds 5\")",
+      "Bash(powershell \"Stop-Process -Id 13356 -Force\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

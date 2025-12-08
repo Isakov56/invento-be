@@ -1,0 +1,278 @@
+// This is your Prisma schema file
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User roles enum
+enum UserRole {
+  OWNER
+  MANAGER
+  CASHIER
+}
+
+// Payment method enum
+enum PaymentMethod {
+  CASH
+  CARD
+  MOBILE_PAYMENT
+}
+
+// Transaction type enum
+enum TransactionType {
+  SALE
+  RETURN
+  REFUND
+}
+
+// Users table
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  firstName String
+  lastName  String
+  role      UserRole @default(CASHIER)
+  phone     String?
+  isActive  Boolean  @default(true)
+
+  // Multi-tenancy: Owner relationship
+  // If user is OWNER, ownerId is NULL (they ARE the owner)
+  // If user is MANAGER/CASHIER, ownerId references their business owner
+  ownerId   String?
+  owner     User?    @relation("OwnerEmployees", fields: [ownerId], references: [id], onDelete: Cascade)
+  employees User[]   @relation("OwnerEmployees")
+
+  // Store assignment (for managers/cashiers)
+  storeId   String?
+  store     Store?   @relation("StoreEmployees", fields: [storeId], references: [id])
+
+  // User preferences
+  language              String?  @default("en")
+  theme                 String?  @default("light")
+  notificationsEnabled  Boolean  @default(true)
+  defaultStoreId        String?
+
+  // Relationships owned by this user (if they are an OWNER)
+  ownedStores           Store[]           @relation("StoreOwner")
+  ownedCategories       Category[]        @relation("CategoryOwner")
+  ownedProducts         Product[]         @relation("ProductOwner")
+  ownedFiles            UploadedFile[]    @relation("UploadedFileOwner")
+  ownedBusinessSettings BusinessSettings? @relation("BusinessSettingsOwner")
+  transactions          Transaction[]
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([email])
+  @@index([storeId])
+  @@index([ownerId])
+}
+
+// Stores/Locations table
+model Store {
+  id          String   @id @default(uuid())
+  name        String
+  address     String
+  city        String
+  state       String
+  zipCode     String
+  phone       String
+  email       String?
+  isActive    Boolean  @default(true)
+
+  // Multi-tenancy: Each store belongs to an owner
+  ownerId     String
+  owner       User     @relation("StoreOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  employees    User[]        @relation("StoreEmployees")
+  products     Product[]
+  transactions Transaction[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([name])
+  @@index([ownerId])
+}
+
+// Categories table
+model Category {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+
+  // Multi-tenancy: Each category belongs to an owner (no longer global)
+  ownerId     String
+  owner       User      @relation("CategoryOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  products    Product[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([name])
+  @@index([ownerId])
+}
+
+// Products table (main product info)
+model Product {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id])
+  storeId     String
+  store       Store    @relation(fields: [storeId], references: [id])
+  brand       String?
+  imageUrl    String?
+  isActive    Boolean  @default(true)
+
+  // Multi-tenancy: Each product belongs to an owner
+  ownerId     String
+  owner       User     @relation("ProductOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  variants    ProductVariant[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([name])
+  @@index([categoryId])
+  @@index([storeId])
+  @@index([ownerId])
+}
+
+// Product Variants table (for size, color, etc.)
+model ProductVariant {
+  id          String  @id @default(uuid())
+  productId   String
+  product     Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sku         String  @unique
+  size        String? // XS, S, M, L, XL, XXL
+  color       String?
+  barcode     String? @unique
+  qrCode      String? @unique
+  costPrice   Float
+  sellingPrice Float
+  stockQuantity Int   @default(0)
+  lowStockThreshold Int @default(10)
+
+  transactionItems TransactionItem[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([productId])
+  @@index([sku])
+  @@index([barcode])
+  @@index([qrCode])
+}
+
+// Transactions/Sales table
+model Transaction {
+  id            String          @id @default(uuid())
+  transactionNo String          @unique
+  type          TransactionType @default(SALE)
+  storeId       String
+  store         Store           @relation(fields: [storeId], references: [id])
+  cashierId     String
+  cashier       User            @relation(fields: [cashierId], references: [id])
+
+  // Multi-tenancy: Each transaction belongs to an owner (derived from store/cashier)
+  // We'll set this based on the cashier's ownerId when creating transaction
+  ownerId       String
+
+  subtotal      Float
+  tax           Float           @default(0)
+  discount      Float           @default(0)
+  total         Float
+
+  paymentMethod PaymentMethod
+  amountPaid    Float
+  change        Float           @default(0)
+
+  notes         String?
+  items         TransactionItem[]
+
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([transactionNo])
+  @@index([storeId])
+  @@index([cashierId])
+  @@index([createdAt])
+  @@index([ownerId])
+}
+
+// Transaction Items table (items in each sale)
+model TransactionItem {
+  id               String         @id @default(uuid())
+  transactionId    String
+  transaction      Transaction    @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  productVariantId String
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id])
+
+  quantity         Int
+  unitPrice        Float
+  discount         Float          @default(0)
+  subtotal         Float
+
+  createdAt        DateTime       @default(now())
+
+  @@index([transactionId])
+  @@index([productVariantId])
+}
+
+// Uploaded Files table (track file ownership for security)
+model UploadedFile {
+  id           String   @id @default(uuid())
+  filename     String   @unique
+  originalName String
+  mimeType     String
+  size         Int
+  url          String
+
+  // Multi-tenancy: Each uploaded file belongs to an owner
+  ownerId      String
+  owner        User     @relation("UploadedFileOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([filename])
+  @@index([ownerId])
+}
+
+// Business Settings table (owner-level settings)
+model BusinessSettings {
+  id                    String  @id @default(uuid())
+
+  // Business information
+  businessName          String?
+  businessLogo          String?
+  taxRate               Float   @default(0)
+  currency              String  @default("USD")
+
+  // Receipt customization
+  receiptHeader         String?
+  receiptFooter         String?
+
+  // POS settings
+  autoPrintReceipt      Boolean @default(false)
+  defaultPaymentMethod  String  @default("cash")
+  soundOnTransaction    Boolean @default(true)
+
+  // Inventory settings
+  lowStockThreshold     Int     @default(10)
+
+  // Multi-tenancy: Each business setting belongs to an owner (one-to-one)
+  ownerId               String  @unique
+  owner                 User    @relation("BusinessSettingsOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([ownerId])
+}
