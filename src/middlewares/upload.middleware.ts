@@ -4,28 +4,36 @@ import fs from 'fs';
 import config from '../config/env';
 import { Request } from 'express';
 
-// Ensure uploads directory exists (only in non-serverless environments)
-// In Vercel/serverless, use /tmp which is writable
-const uploadDir = process.env.VERCEL ? '/tmp/uploads' : config.uploadPath;
+// Determine storage strategy - use memory storage if Cloudinary credentials exist
+const useCloudinary = config.cloudinaryCloudName && config.cloudinaryApiKey && config.cloudinaryApiSecret;
 
-// Only try to create directory in non-Vercel environments
-if (!process.env.VERCEL && !fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+let storage: any;
+
+if (useCloudinary) {
+  // Use memory storage when Cloudinary credentials are available - will upload to Cloudinary in controller
+  storage = multer.memoryStorage();
+} else {
+  // Local disk storage for development (no Cloudinary credentials)
+  const uploadDir = config.uploadPath;
+
+  // Create directory if it doesn't exist
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+
+  storage = multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      cb(null, uploadDir);
+    },
+    filename: (_req, file, cb) => {
+      // Create unique filename: timestamp-randomstring-originalname
+      const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+      const ext = path.extname(file.originalname);
+      const name = path.basename(file.originalname, ext).replace(/\s+/g, '-');
+      cb(null, `${name}-${uniqueSuffix}${ext}`);
+    },
+  });
 }
-
-// Configure storage
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (_req, file, cb) => {
-    // Create unique filename: timestamp-randomstring-originalname
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    const ext = path.extname(file.originalname);
-    const name = path.basename(file.originalname, ext).replace(/\s+/g, '-');
-    cb(null, `${name}-${uniqueSuffix}${ext}`);
-  },
-});
 
 // File filter for images only
 const fileFilter = (_req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {

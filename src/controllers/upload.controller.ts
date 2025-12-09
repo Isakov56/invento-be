@@ -1,9 +1,42 @@
 import { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
+import { v2 as cloudinary } from 'cloudinary';
 import { sendSuccess, sendError } from '../utils/response';
 import config from '../config/env';
 import prisma from '../config/database';
+
+// Configure Cloudinary if credentials are provided
+if (config.cloudinaryCloudName && config.cloudinaryApiKey && config.cloudinaryApiSecret) {
+  cloudinary.config({
+    cloud_name: config.cloudinaryCloudName,
+    api_key: config.cloudinaryApiKey,
+    api_secret: config.cloudinaryApiSecret,
+  });
+}
+
+const useCloudinary = config.cloudinaryCloudName && config.cloudinaryApiKey && config.cloudinaryApiSecret;
+
+/**
+ * Upload file to Cloudinary
+ */
+const uploadToCloudinary = (fileBuffer: Buffer, originalName: string): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: 'auto',
+        public_id: `products/${Date.now()}-${originalName.replace(/\.[^/.]+$/, '')}`,
+        overwrite: true,
+      },
+      (error, result) => {
+        if (error) reject(error);
+        else resolve(result);
+      }
+    );
+
+    uploadStream.end(fileBuffer);
+  });
+};
 
 /**
  * Upload a single image
@@ -19,13 +52,29 @@ export const uploadImage = async (req: Request, res: Response): Promise<Response
       return sendError(res, 'No file uploaded', 400);
     }
 
-    // Generate URL for the uploaded file
-    const fileUrl = `/uploads/${req.file.filename}`;
+    let fileUrl: string;
+    let filename: string;
+
+    if (useCloudinary && req.file.buffer) {
+      // Upload to Cloudinary
+      try {
+        const cloudinaryResult = await uploadToCloudinary(req.file.buffer, req.file.originalname);
+        fileUrl = cloudinaryResult.secure_url;
+        filename = cloudinaryResult.public_id; // Use Cloudinary public_id as filename
+      } catch (cloudinaryError: any) {
+        console.error('Cloudinary upload error:', cloudinaryError);
+        return sendError(res, 'Failed to upload to cloud storage', 500);
+      }
+    } else {
+      // Local file storage
+      fileUrl = `/uploads/${req.file.filename}`;
+      filename = req.file.filename;
+    }
 
     // Track file ownership in database
     const uploadedFile = await prisma.uploadedFile.create({
       data: {
-        filename: req.file.filename,
+        filename: filename,
         originalName: req.file.originalname,
         mimeType: req.file.mimetype,
         size: req.file.size,
@@ -72,11 +121,28 @@ export const uploadMultipleImages = async (req: Request, res: Response): Promise
     // Track all files ownership in database
     const uploadedFiles = await Promise.all(
       files.map(async (file) => {
-        const fileUrl = `/uploads/${file.filename}`;
+        let fileUrl: string;
+        let filename: string;
+
+        if (useCloudinary && file.buffer) {
+          // Upload to Cloudinary
+          try {
+            const cloudinaryResult = await uploadToCloudinary(file.buffer, file.originalname);
+            fileUrl = cloudinaryResult.secure_url;
+            filename = cloudinaryResult.public_id;
+          } catch (cloudinaryError: any) {
+            console.error('Cloudinary upload error:', cloudinaryError);
+            throw new Error('Failed to upload to cloud storage');
+          }
+        } else {
+          // Local file storage
+          fileUrl = `/uploads/${file.filename}`;
+          filename = file.filename;
+        }
 
         const uploadedFile = await prisma.uploadedFile.create({
           data: {
-            filename: file.filename,
+            filename: filename,
             originalName: file.originalname,
             mimeType: file.mimetype,
             size: file.size,
@@ -136,19 +202,21 @@ export const deleteImage = async (req: Request, res: Response): Promise<Response
       return sendError(res, 'File not found', 404);
     }
 
-    const filePath = path.join(config.uploadPath, filename);
-
-    // Check if file exists on filesystem
-    if (!fs.existsSync(filePath)) {
-      // Delete database record even if file doesn't exist
-      await prisma.uploadedFile.delete({
-        where: { id: file.id },
-      });
-      return sendError(res, 'File not found on filesystem', 404);
+    // Delete from Cloudinary if it was uploaded there
+    if (useCloudinary && filename.includes('/')) {
+      try {
+        await cloudinary.uploader.destroy(filename);
+      } catch (cloudinaryError: any) {
+        console.error('Cloudinary deletion error:', cloudinaryError);
+        // Continue with database deletion even if Cloudinary fails
+      }
+    } else {
+      // Delete from local filesystem
+      const filePath = path.join(config.uploadPath, filename);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
     }
-
-    // Delete file from filesystem
-    fs.unlinkSync(filePath);
 
     // Delete database record
     await prisma.uploadedFile.delete({

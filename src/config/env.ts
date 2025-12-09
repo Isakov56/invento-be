@@ -12,6 +12,9 @@ interface Config {
   corsOrigin: string | string[];
   maxFileSize: number;
   uploadPath: string;
+  cloudinaryCloudName?: string;
+  cloudinaryApiKey?: string;
+  cloudinaryApiSecret?: string;
 }
 
 // Parse CORS_ORIGIN - supports single URL or comma-separated URLs
@@ -35,6 +38,9 @@ const config: Config = {
   corsOrigin: parseCorsOrigin(process.env.CORS_ORIGIN),
   maxFileSize: parseInt(process.env.MAX_FILE_SIZE || '5242880', 10),
   uploadPath: process.env.UPLOAD_PATH || './uploads',
+  cloudinaryCloudName: process.env.CLOUDINARY_CLOUD_NAME,
+  cloudinaryApiKey: process.env.CLOUDINARY_API_KEY,
+  cloudinaryApiSecret: process.env.CLOUDINARY_API_SECRET,
 };
 
 // Validate required environment variables
