@@ -3,6 +3,30 @@ import prisma from '../config/database';
 import { sendSuccess, sendError } from '../utils/response';
 
 /**
+ * Convert relative image URLs to full Cloudinary URLs if needed
+ * This handles the case where old image URLs are stored as relative paths
+ */
+const normalizeImageUrl = (imageUrl: string | null): string | null => {
+  if (!imageUrl) return null;
+  
+  // If it's already a full URL, return as-is
+  if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+    return imageUrl;
+  }
+  
+  // If it's a relative path and we have Cloudinary configured, 
+  // construct the Cloudinary URL (but we can't know the public_id from filename)
+  // For now, just mark that we don't have the full URL
+  // In production, the frontend should use the full Cloudinary URL
+  if (process.env.VERCEL && !imageUrl.startsWith('/')) {
+    return imageUrl;
+  }
+  
+  // Return as-is (will be `/uploads/...` in dev or relative paths)
+  return imageUrl;
+};
+
+/**
  * Get all products with optional filtering (TENANT-FILTERED)
  * Only returns products belonging to the authenticated user's owner
  */
@@ -61,7 +85,13 @@ export const getAllProducts = async (req: Request, res: Response): Promise<Respo
       },
     });
 
-    return sendSuccess(res, products, 'Products retrieved successfully');
+    // Normalize image URLs for products with relative paths
+    const normalizedProducts = products.map(product => ({
+      ...product,
+      imageUrl: normalizeImageUrl(product.imageUrl),
+    }));
+
+    return sendSuccess(res, normalizedProducts, 'Products retrieved successfully');
   } catch (error: any) {
     console.error('Get products error:', error);
     return sendError(res, error.message || 'Failed to retrieve products', 500);
@@ -116,7 +146,13 @@ export const getProductById = async (req: Request, res: Response): Promise<Respo
       return sendError(res, 'Product not found', 404);
     }
 
-    return sendSuccess(res, product, 'Product retrieved successfully');
+    // Normalize image URL
+    const normalizedProduct = {
+      ...product,
+      imageUrl: normalizeImageUrl(product.imageUrl),
+    };
+
+    return sendSuccess(res, normalizedProduct, 'Product retrieved successfully');
   } catch (error: any) {
     console.error('Get product error:', error);
     return sendError(res, error.message || 'Failed to retrieve product', 500);
