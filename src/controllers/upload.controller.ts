@@ -175,55 +175,101 @@ export const uploadMultipleImages = async (req: Request, res: Response): Promise
 };
 
 /**
+ * Extract public ID from Cloudinary URL
+ * Example: https://res.cloudinary.com/de6vmr2ma/image/upload/v1765298263/products/filename.jpg
+ * Should return: products/filename
+ */
+const extractPublicIdFromUrl = (url: string): string | null => {
+  const match = url.match(/\/upload\/(?:v\d+\/)?(.+)\.[^.]+$/);
+  return match ? match[1] : null;
+};
+
+/**
  * Delete an uploaded image
  */
 export const deleteImage = async (req: Request, res: Response): Promise<Response> => {
   try {
-    const { filename } = req.params;
+    const { imageUrl } = req.params;
 
     // Ensure tenant context exists
     if (!req.ownerId) {
       return sendError(res, 'Unauthorized - no tenant context', 401);
     }
 
-    if (!filename) {
-      return sendError(res, 'Filename is required', 400);
+    if (!imageUrl) {
+      return sendError(res, 'Image URL is required', 400);
     }
 
-    // Find file in database and verify ownership
-    const file = await prisma.uploadedFile.findFirst({
-      where: {
-        filename,
-        ownerId: req.ownerId,
-      },
-    });
+    // Decode URL if it's URL-encoded
+    let decodedUrl = decodeURIComponent(imageUrl);
 
-    if (!file) {
-      return sendError(res, 'File not found', 404);
-    }
+    // Check if it's a Cloudinary URL
+    if (decodedUrl.includes('res.cloudinary.com')) {
+      // Extract public ID from Cloudinary URL
+      const publicId = extractPublicIdFromUrl(decodedUrl);
+      
+      if (!publicId) {
+        return sendError(res, 'Could not extract public ID from Cloudinary URL', 400);
+      }
 
-    // Delete from Cloudinary if it was uploaded there
-    if (useCloudinary && filename.includes('/')) {
+      // Delete from Cloudinary
       try {
-        await cloudinary.uploader.destroy(filename);
+        await cloudinary.uploader.destroy(publicId);
+        console.log(`✅ Deleted from Cloudinary: ${publicId}`);
       } catch (cloudinaryError: any) {
         console.error('Cloudinary deletion error:', cloudinaryError);
-        // Continue with database deletion even if Cloudinary fails
+        return sendError(res, 'Failed to delete image from Cloudinary', 500);
       }
+
+      // Try to find and delete from database if it exists
+      try {
+        const file = await prisma.uploadedFile.findFirst({
+          where: {
+            url: decodedUrl,
+            ownerId: req.ownerId,
+          },
+        });
+
+        if (file) {
+          await prisma.uploadedFile.delete({
+            where: { id: file.id },
+          });
+        }
+      } catch (dbError) {
+        console.error('Database deletion error (non-critical):', dbError);
+        // Don't fail the request if database cleanup fails
+      }
+
+      return sendSuccess(res, null, 'Image deleted successfully');
     } else {
+      // Handle local file storage (filename-only)
+      const filename = imageUrl;
+
+      // Find file in database and verify ownership
+      const file = await prisma.uploadedFile.findFirst({
+        where: {
+          filename,
+          ownerId: req.ownerId,
+        },
+      });
+
+      if (!file) {
+        return sendError(res, 'File not found', 404);
+      }
+
       // Delete from local filesystem
       const filePath = path.join(config.uploadPath, filename);
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
       }
+
+      // Delete database record
+      await prisma.uploadedFile.delete({
+        where: { id: file.id },
+      });
+
+      return sendSuccess(res, null, 'Image deleted successfully');
     }
-
-    // Delete database record
-    await prisma.uploadedFile.delete({
-      where: { id: file.id },
-    });
-
-    return sendSuccess(res, null, 'Image deleted successfully');
   } catch (error: any) {
     console.error('Delete image error:', error);
     return sendError(res, error.message || 'Failed to delete image', 500);
